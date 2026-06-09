@@ -1,18 +1,15 @@
-# ATmega-328P
-# Adjunto el codigo del juego
-
-// Deber 2: VideoJuego PONG
+// Deber 2: VideoJuego PONG 
 
 #define F_CPU 8000000UL
 #include <avr/io.h>
 #include <util/delay.h>
 
 #define TAM_BIENVENIDA 96
-#define TAM_GANADOR 32
+#define TAM_GANADOR    80
 
 // Matriz de bienvenida
-unsigned char BIENVENIDA[]{
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Espacio
+unsigned char BIENVENIDA[] = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x7E, 0x7E, 0x5A, 0x5A, 0x7E, 0x3C, 0x00, // B
   0x00, 0x66, 0x66, 0x7E, 0x7E, 0x66, 0x66, 0x00, // I
   0x00, 0x7E, 0x7E, 0x5A, 0x5A, 0x5A, 0x5A, 0x00, // E
@@ -23,7 +20,20 @@ unsigned char BIENVENIDA[]{
   0x00, 0x66, 0x66, 0x7E, 0x7E, 0x66, 0x66, 0x00, // I
   0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00, // D
   0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Espacio
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+// Matriz de GANADOR
+unsigned char GANADOR[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Espacio
+    0x00, 0x7E, 0x7E, 0x46, 0x56, 0x76, 0x76, 0x00, // G
+    0x00, 0x7E, 0x7E, 0x1A, 0x1A, 0x7E, 0x7E, 0x00, // A
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x7E, 0x7E, 0x1A, 0x1A, 0x7E, 0x7E, 0x00, // A
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00, // D
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
+    0x00, 0x7E, 0x7E, 0x12, 0x12, 0x3E, 0x6C, 0x00, // R
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Espacio
 };
 
 // Matrices de dificultad
@@ -31,19 +41,28 @@ unsigned char MODO_FACIL[]   = {0x00, 0x7E, 0x7E, 0x16, 0x16, 0x16, 0x06, 0x00};
 unsigned char MODO_NORMAL[]  = {0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00}; // N
 unsigned char MODO_DIFICIL[] = {0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00}; // D
 
-// Matrices de jugador ganador
-unsigned char GANADOR_J1[] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Espacio
-  0x00, 0x66, 0x66, 0x7E, 0x7E, 0x06, 0x06, 0x00, // J
-  0x00, 0x40, 0x44, 0x7E, 0x7E, 0x40, 0x40, 0x00, // 1
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Espacio
-};
+// Digitos 0-9
+unsigned char DIGITO_0[] = {0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00};
+unsigned char DIGITO_1[] = {0x00, 0x08, 0x04, 0x7E, 0x7e, 0x00, 0x00, 0x00};
+unsigned char DIGITO_2[] = {0x00, 0x66, 0x76, 0x7E, 0x5E, 0x4C, 0x40, 0x00};
+unsigned char DIGITO_3[] = {0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5E, 0x7E, 0x00};
+unsigned char DIGITO_4[] = {0x00, 0x0E, 0x0E, 0x08, 0x08, 0x7E, 0x7E, 0x00};
+unsigned char DIGITO_5[] = {0x00, 0x5E, 0x5E, 0x5E, 0x76, 0x76, 0x76, 0x00};
+unsigned char DIGITO_6[] = {0x00, 0x7E, 0x7E, 0x4A, 0x4A, 0x7A, 0x7A, 0x00};
+unsigned char DIGITO_7[] = {0x00, 0x46, 0x66, 0x36, 0x1E, 0x0E, 0x06, 0x00};
+unsigned char DIGITO_8[] = {0x00, 0x7E, 0x7E, 0x56, 0x56, 0x7E, 0x7E, 0x00};
+unsigned char DIGITO_9[] = {0x00, 0x1E, 0x1E, 0x16, 0x76, 0x76, 0x7E, 0x00};
 
-unsigned char GANADOR_J2[] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Espacio
-  0x00, 0x66, 0x66, 0x7E, 0x7E, 0x06, 0x06, 0x00, // J
-  0x00, 0x66, 0x76, 0x7E, 0x5E, 0x4C, 0x00, 0x00, // 2
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // Espacio
+// Palabra PUNTOS para scroll de puntuacion
+unsigned char PUNTOS[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x7E, 0x7E, 0x12, 0x12, 0x1E, 0x0C, 0x00, // P
+    0x00, 0x7E, 0x7E, 0x60, 0x60, 0x7E, 0x7E, 0x00, // U
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x06, 0x06, 0x7E, 0x7E, 0x06, 0x06, 0x00, // T
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
+    0x00, 0x5E, 0x5E, 0x56, 0x76, 0x76, 0x76, 0x00, // S
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
 // Multiplexacion
@@ -57,7 +76,7 @@ void estado_bienvenido(){
                 for(int j = 0; j < 8; j++){
                     PORTD = posiciones[j];
                     PORTB = ~BIENVENIDA[i + j];
-                    _delay_ms(0.08);
+                    _delay_ms(0.05);
                 }
                 if(!(PINC & (1 << PC4))){
                     PORTD = 0x00;
@@ -79,7 +98,7 @@ int estado_seleccion_nivel(){
             if(nivel == 0)      PORTB = ~MODO_FACIL[j];
             else if(nivel == 1) PORTB = ~MODO_NORMAL[j];
             else                PORTB = ~MODO_DIFICIL[j];
-            _delay_ms(0.08);
+            _delay_ms(0.05);
         }
         if(!(PINC & (1 << PC4))){
             nivel = (nivel + 1) % 3;
@@ -95,140 +114,79 @@ int estado_seleccion_nivel(){
 
 // ---- ESTADO JUEGO ----
 int estado_juego(int nivel){
-    // Velocidad segun nivel
     int velocidad;
     if(nivel == 0)      velocidad = 150;
     else if(nivel == 1) velocidad = 100;
     else                velocidad = 60;
 
-    // Posicion inicial de las paletas
-    int columna_paleta_jugador1 = 3;
-    int columna_paleta_jugador2 = 3;
-
-    // Posicion inicial de la bola
-    int fila_bola    = 3;
-    int columna_bola = 3;
-
-    // Direccion de la bola
-    int direccion_fila    =  1;
-    int direccion_columna =  1;
-
-    // Puntaje
-    int puntos_jugador1 = 0;
-    int puntos_jugador2 = 0;
-
-    // Temporizador para mover la bola
+    int columna_paleta    = 3;
+    int fila_bola         = 4;
+    int columna_bola      = 3;
+    int direccion_fila    = 1;
+    int direccion_columna = 1;
+    int puntos            = 0;
     int contador_velocidad = 0;
-
-    // Temporizador para mover las paletas
-    int contador_paleta = 0;
+    int contador_paleta    = 0;
 
     while(1){
-
-        // ---- DIBUJAR MATRIZ ----
         unsigned char frame[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-        // Dibujar paleta jugador 2 en fila 0
-        frame[0] |= (1 << columna_paleta_jugador2);
-        frame[0] |= (1 << (columna_paleta_jugador2 + 1));
-
-        // Dibujar paleta jugador 1 en fila 7
-        frame[7] |= (1 << columna_paleta_jugador1);
-        frame[7] |= (1 << (columna_paleta_jugador1 + 1));
-
-        // Dibujar bola
+        frame[7] |= (1 << columna_paleta);
+        frame[7] |= (1 << (columna_paleta + 1));
         frame[fila_bola] |= (1 << columna_bola);
 
-        // Multiplexado
         for(int j = 0; j < 8; j++){
             PORTD = posiciones[j];
             PORTB = ~frame[j];
-            _delay_ms(0.08);
+            _delay_ms(0.05);
         }
 
-        // ---- LEER BOTONES DE PALETAS (led a led) ----
         contador_paleta++;
         if(contador_paleta >= 20){
             contador_paleta = 0;
-
-            // Jugador 1 izquierda (PC0)
-            if(!(PINC & (1 << PC0))){
-                if(columna_paleta_jugador1 > 0) columna_paleta_jugador1--;
-            }
-            // Jugador 1 derecha (PC1)
-            if(!(PINC & (1 << PC1))){
-                if(columna_paleta_jugador1 < 6) columna_paleta_jugador1++;
-            }
-            // Jugador 2 izquierda (PC2)
             if(!(PINC & (1 << PC2))){
-                if(columna_paleta_jugador2 > 0) columna_paleta_jugador2--;
+                if(columna_paleta > 0) columna_paleta--;
             }
-            // Jugador 2 derecha (PC3)
             if(!(PINC & (1 << PC3))){
-                if(columna_paleta_jugador2 < 6) columna_paleta_jugador2++;
+                if(columna_paleta < 6) columna_paleta++;
             }
         }
 
-        // ---- MOVER BOLA SEGUN VELOCIDAD ----
         contador_velocidad++;
         if(contador_velocidad >= velocidad){
             contador_velocidad = 0;
 
-            // Calcular siguiente posicion
             int siguiente_fila    = fila_bola    + direccion_fila;
             int siguiente_columna = columna_bola + direccion_columna;
 
-            // ---- COLISION CON PALETA JUGADOR 1 (bola en fila 7) ----
             if(fila_bola == 7){
-                if(columna_bola == columna_paleta_jugador1 ||
-                   columna_bola == columna_paleta_jugador1 + 1){
+                if(columna_bola == columna_paleta ||
+                   columna_bola == columna_paleta + 1){
+                    puntos++;
+                    if(puntos >= 10) return -1; // GANADOR
                     direccion_fila = -direccion_fila;
                     siguiente_fila = fila_bola + direccion_fila;
-                    // Chequeo adicional de pared lateral en esquina
                     if(siguiente_columna <= 0 || siguiente_columna >= 7){
                         direccion_columna = -direccion_columna;
                         siguiente_columna = columna_bola + direccion_columna;
                     }
                 } else {
-                    // Punto para jugador 2
-                    puntos_jugador2++;
-                    fila_bola         = 3;
-                    columna_bola      = 3;
-                    direccion_fila    = 1;
-                    direccion_columna = 1;
-                    if(puntos_jugador2 >= 3) return 2;
-                    continue;
+                    return puntos;
                 }
             }
-            // ---- COLISION CON PALETA JUGADOR 2 (bola en fila 0) ----
-            else if(fila_bola == 0){
-                if(columna_bola == columna_paleta_jugador2 ||
-                   columna_bola == columna_paleta_jugador2 + 1){
-                    direccion_fila = -direccion_fila;
-                    siguiente_fila = fila_bola + direccion_fila;
-                    // Chequeo adicional de pared lateral en esquina
-                    if(siguiente_columna <= 0 || siguiente_columna >= 7){
-                        direccion_columna = -direccion_columna;
-                        siguiente_columna = columna_bola + direccion_columna;
-                    }
-                } else {
-                    // Punto para jugador 1
-                    puntos_jugador1++;
-                    fila_bola         = 3;
-                    columna_bola      = 3;
-                    direccion_fila    = -1;
-                    direccion_columna = 1;
-                    if(puntos_jugador1 >= 3) return 1;
-                    continue;
+            else if(siguiente_fila <= 0){
+                direccion_fila = -direccion_fila;
+                siguiente_fila = fila_bola + direccion_fila;
+                if(siguiente_columna <= 0 || siguiente_columna >= 7){
+                    direccion_columna = -direccion_columna;
+                    siguiente_columna = columna_bola + direccion_columna;
                 }
             }
-            // ---- COLISION CON PAREDES LATERALES ----
             else if(siguiente_columna <= 0 || siguiente_columna >= 7){
                 direccion_columna = -direccion_columna;
                 siguiente_columna = columna_bola + direccion_columna;
             }
 
-            // Actualizar posicion de la bola
             fila_bola    = siguiente_fila;
             columna_bola = siguiente_columna;
         }
@@ -236,14 +194,15 @@ int estado_juego(int nivel){
 }
 
 // ---- ESTADO GANADOR ----
-void estado_ganador(int ganador){
-    for(int i = 0; i <= TAM_GANADOR - 8; i++){
-        for(int k = 0; k < 50; k++){
-            for(int j = 0; j < 8; j++){
-                PORTD = posiciones[j];
-                if(ganador == 1) PORTB = ~GANADOR_J1[i + j];
-                else             PORTB = ~GANADOR_J2[i + j];
-                _delay_ms(0.08);
+void estado_ganador(){
+    for(int rep = 0; rep < 3; rep++){
+        for(int i = 0; i <= TAM_GANADOR - 8; i++){
+            for(int k = 0; k < 50; k++){
+                for(int j = 0; j < 8; j++){
+                    PORTD = posiciones[j];
+                    PORTB = ~GANADOR[i + j];
+                    _delay_ms(0.05);
+                }
             }
         }
     }
@@ -251,17 +210,54 @@ void estado_ganador(int ganador){
     PORTB = 0xFF;
 }
 
+// ---- ESTADO PUNTUACION ----
+void estado_puntuacion(int puntos){
+    int decenas  = puntos / 10;
+    int unidades = puntos % 10;
+
+    unsigned char* digitos[10] = {
+        DIGITO_0, DIGITO_1, DIGITO_2, DIGITO_3, DIGITO_4,
+        DIGITO_5, DIGITO_6, DIGITO_7, DIGITO_8, DIGITO_9
+    };
+
+    unsigned char buffer[80];
+    int tam = 0;
+
+    for(int i = 0; i < 8; i++)  buffer[tam++] = 0x00;
+
+    if(puntos >= 10){
+        for(int i = 0; i < 8; i++) buffer[tam++] = digitos[decenas][i];
+    }
+    for(int i = 0; i < 8; i++)  buffer[tam++] = digitos[unidades][i];
+    for(int i = 0; i < 48; i++) buffer[tam++] = PUNTOS[i];
+    for(int i = 0; i < 8; i++)  buffer[tam++] = 0x00;
+
+    for(int i = 0; i <= tam - 8; i++){
+        for(int k = 0; k < 50; k++){
+            for(int j = 0; j < 8; j++){
+                PORTD = posiciones[j];
+                PORTB = ~buffer[i + j];
+                _delay_ms(0.05);
+            }
+        }
+    }
+
+    PORTD = 0x00;
+    PORTB = 0xFF;
+}
+
 int main(){
-    DDRD  = 0xFF; // PORTD salida — filas
-    DDRB  = 0xFF; // PORTB salida — columnas
-    DDRC  = 0x00; // PORTC entrada — botones
-    PORTC = 0xFF; // Pull-ups internos activados
+    DDRD  = 0xFF;
+    DDRB  = 0xFF;
+    DDRC  = 0x00;
+    PORTC = 0xFF;
 
     while(1){
         estado_bienvenido();
-        _delay_ms(200);
-        int nivel   = estado_seleccion_nivel();
-        int ganador = estado_juego(nivel);
-        estado_ganador(ganador);
+        _delay_ms(10);
+        int nivel  = estado_seleccion_nivel();
+        int puntos = estado_juego(nivel);
+        if(puntos == -1) estado_ganador();
+        else             estado_puntuacion(puntos);
     }
 }
