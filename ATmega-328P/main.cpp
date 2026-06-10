@@ -1,814 +1,848 @@
+// ============================================================
+// DEBER 2: VIDEOJUEGO PONG
+// MICROCONTROLADOR: ATmega328P
+// FRECUENCIA DE TRABAJO: 8 MHz
+//
+// FUNCIONES DEL MICROCONTROLADOR:
+// - Controlar la matriz LED 8x8 mediante multiplexación.
+// - Mostrar mensajes desplazables.
+// - Leer los pulsadores del usuario.
+// - Ejecutar la lógica del videojuego Pong.
+// - Enviar comandos de sonido al PIC16F887.
+//
+// CONEXIONES PRINCIPALES:
+//
+// MATRIZ LED 8x8
+// PORTD -> Filas F0-F7
+// PORTB -> Columnas C0-C7
+//
+// PULSADORES
+// ADC6 -> SUBIR
+// PC3  -> BAJAR
+// PC4  -> SELECCIONAR NIVEL
+// PC5  -> INICIAR PARTIDA
+//
+// COMUNICACIÓN PARALELA HACIA EL PIC16F887
+// PC0 -> RA0
+// PC1 -> RA1
+// PC2 -> RA2
+// ============================================================
+
 #define F_CPU 8000000UL
 
 #include <avr/io.h>
-#include <avr/interrupt.h>
 #include <util/delay.h>
-#include <util/atomic.h>
-#include <stdint.h>
 
 // ============================================================
-// PONG LED PARA UN JUGADOR
-// Microcontrolador: ATmega328P
-// Frecuencia: 8 MHz
-//
-// MATRIZ LED 8x8
-// PORTD -> F0-F7: filas activas en bajo
-// PORTB -> C0-C7: columnas activas en alto
-//
-// PULSADORES
-// PC0 -> SUBIR
-// PC1 -> BAJAR
-// PC2 -> INICIAR
-//
-// COMUNICACIÓN PARALELA CON PIC16F887
-// PC3 -> RA0 del PIC
-// PC4 -> RA1 del PIC
-// PC5 -> RA2 del PIC
-//
-// RESET FÍSICO
-// PC6 / RESET -> resistencia de 10 kΩ hacia VCC
-// PC6 / RESET -> pulsador hacia GND
+// TAMAÑO DE LOS MENSAJES DESPLAZABLES
 // ============================================================
 
-// ------------------------ Pulsadores -------------------------
-
-#define BTN_UP      PC0
-#define BTN_DOWN    PC1
-#define BTN_START   PC2
-
-// ---------------- Parámetros generales -----------------------
-
-#define MATRIX_SIZE       8
-#define WIN_SCORE         8
-#define DEBOUNCE_TIME_MS  30
+#define TAM_BIENVENIDA 96
+#define TAM_GANADOR    72
 
 // ============================================================
 // COMANDOS ENVIADOS AL PIC16F887
-// ============================================================
 //
-// PC5 PC4 PC3
+// Los pines PC0, PC1 y PC2 forman un bus paralelo de 3 bits.
+// Cada combinación representa un evento del videojuego.
+//
+// PC2 PC1 PC0
 //  0   0   0  -> Silencio
-//  0   0   1  -> Inicio
+//  0   0   1  -> Inicio de partida
 //  0   1   0  -> Rebote contra pared
-//  0   1   1  -> Rebote contra raqueta
+//  0   1   1  -> Rebote contra paleta
 //  1   0   0  -> Cambio de nivel
 //  1   0   1  -> Derrota
 //  1   1   0  -> Victoria
+//  1   1   1  -> Música de bienvenida
 // ============================================================
 
-typedef enum {
-    PIC_NONE       = 0,
-    PIC_START      = 1,
-    PIC_WALL       = 2,
-    PIC_PADDLE     = 3,
-    PIC_LEVEL      = 4,
-    PIC_GAME_OVER  = 5,
-    PIC_VICTORY    = 6
-} PicCommand;
+#define CMD_SILENCIO    0
+#define CMD_INICIO      1
+#define CMD_PARED       2
+#define CMD_PALETA      3
+#define CMD_NIVEL       4
+#define CMD_DERROTA     5
+#define CMD_VICTORIA    6
+#define CMD_BIENVENIDA  7
 
 // ============================================================
-// ESTADOS DEL JUEGO
-// ============================================================
-
-typedef enum {
-    STATE_WAITING,
-    STATE_RUNNING,
-    STATE_GAME_OVER,
-    STATE_VICTORY
-} GameState;
-
-GameState gameState = STATE_WAITING;
-
-// ============================================================
-// VARIABLES DE LA MATRIZ
-// ============================================================
-
-volatile uint8_t displayBuffer[MATRIX_SIZE] = {0};
-volatile uint8_t currentRow = 0;
-volatile uint32_t milliseconds = 0;
-
-// ============================================================
-// VARIABLES DEL JUEGO
-// ============================================================
-
-uint8_t currentLevel = 1;
-uint16_t ballInterval = 650;
-
-uint8_t paddleTop = 2;
-uint8_t paddleSize = 3;
-
-int8_t ballX = 4;
-int8_t ballY = 3;
-
-int8_t directionX = -1;
-int8_t directionY = 1;
-
-uint8_t score = 0;
-uint32_t lastBallMovement = 0;
-
-// ============================================================
-// VARIABLES PARA GENERAR TRAYECTORIAS VARIABLES
-// ============================================================
-
-// Define cada cuántos desplazamientos horizontales
-// se mueve verticalmente la pelota.
+// MATRIZ DEL MENSAJE "BIENVENIDO"
 //
-// 1 = diagonal pronunciada
-// 2 = pendiente media
-// 3 = pendiente suave
-
-uint8_t verticalPeriod = 1;
-uint8_t verticalCounter = 0;
-
-// Semilla del generador pseudoaleatorio.
-
-uint16_t randomState = 0xACE1u;
-
-// ============================================================
-// IMÁGENES ESTÁTICAS
+// Cada grupo de 8 valores representa una letra.
+// El mensaje se desplaza horizontalmente en la matriz LED.
 // ============================================================
 
-// Número 1
+unsigned char BIENVENIDA[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 
-const uint8_t LEVEL_1[MATRIX_SIZE] = {
-    0x00,
-    0x18,
-    0x38,
-    0x18,
-    0x18,
-    0x18,
-    0x7E,
-    0x00
-};
+    0x00, 0x7E, 0x7E, 0x5A, 0x5A, 0x7E, 0x3C, 0x00, // B
+    0x00, 0x66, 0x66, 0x7E, 0x7E, 0x66, 0x66, 0x00, // I
+    0x00, 0x7E, 0x7E, 0x5A, 0x5A, 0x5A, 0x5A, 0x00, // E
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x1E, 0x3E, 0x60, 0x60, 0x3E, 0x1E, 0x00, // V
+    0x00, 0x7E, 0x7E, 0x5A, 0x5A, 0x5A, 0x5A, 0x00, // E
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x66, 0x66, 0x7E, 0x7E, 0x66, 0x66, 0x00, // I
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00, // D
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
 
-// Número 2
-
-const uint8_t LEVEL_2[MATRIX_SIZE] = {
-    0x00,
-    0x3C,
-    0x66,
-    0x06,
-    0x1C,
-    0x30,
-    0x7E,
-    0x00
-};
-
-// Número 3
-
-const uint8_t LEVEL_3[MATRIX_SIZE] = {
-    0x00,
-    0x3C,
-    0x66,
-    0x06,
-    0x1C,
-    0x66,
-    0x3C,
-    0x00
-};
-
-// X para indicar derrota
-
-const uint8_t GAME_OVER_IMAGE[MATRIX_SIZE] = {
-    0x81,
-    0x42,
-    0x24,
-    0x18,
-    0x18,
-    0x24,
-    0x42,
-    0x81
-};
-
-// V para indicar victoria
-
-const uint8_t VICTORY_IMAGE[MATRIX_SIZE] = {
-    0x81,
-    0x81,
-    0x42,
-    0x42,
-    0x24,
-    0x24,
-    0x18,
-    0x00
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
 // ============================================================
-// INTERRUPCIÓN PARA MULTIPLEXAR LA MATRIZ LED
-// ============================================================
+// MATRIZ DEL MENSAJE "GANADOR"
 //
-// Polaridad confirmada durante la prueba:
-// - Columnas activas en alto.
-// - Filas activas en bajo.
+// Este mensaje se muestra cuando el jugador alcanza 10 puntos.
 // ============================================================
 
-ISR(TIMER0_COMPA_vect) {
-    // Apagar temporalmente la matriz para reducir ghosting.
-    PORTB = 0x00;
-    PORTD = 0xFF;
+unsigned char GANADOR[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 
-    // Activar columnas necesarias.
-    PORTB = displayBuffer[currentRow];
+    0x00, 0x7E, 0x7E, 0x46, 0x56, 0x76, 0x76, 0x00, // G
+    0x00, 0x7E, 0x7E, 0x1A, 0x1A, 0x7E, 0x7E, 0x00, // A
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x7E, 0x7E, 0x1A, 0x1A, 0x7E, 0x7E, 0x00, // A
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00, // D
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
+    0x00, 0x7E, 0x7E, 0x12, 0x12, 0x3E, 0x6C, 0x00, // R
 
-    // Activar solamente una fila.
-    PORTD = (uint8_t)(~(1 << currentRow));
-
-    currentRow++;
-
-    if (currentRow >= MATRIX_SIZE) {
-        currentRow = 0;
-    }
-
-    milliseconds++;
-}
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 // ============================================================
-// CONFIGURAR TIMER0
+// ICONOS PARA SELECCIONAR LA DIFICULTAD
+//
+// F -> Fácil
+// N -> Normal
+// D -> Difícil
 // ============================================================
 
-void initTimer0(void) {
-    // Timer0 en modo CTC.
-    TCCR0A = (1 << WGM01);
+unsigned char MODO_FACIL[] = {
+    0x00, 0x7E, 0x7E, 0x16, 0x16, 0x16, 0x06, 0x00
+};
 
-    // Prescaler de 64.
-    TCCR0B = (1 << CS01) | (1 << CS00);
+unsigned char MODO_NORMAL[] = {
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00
+};
 
-    // 8 MHz / 64 = 125000 Hz
-    // Interrupción cada 1 ms:
-    // 125000 / 1000 - 1 = 124
-
-    OCR0A = 124;
-
-    // Activar interrupción por comparación.
-    TIMSK0 = (1 << OCIE0A);
-}
+unsigned char MODO_DIFICIL[] = {
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x3C, 0x00
+};
 
 // ============================================================
-// OBTENER TIEMPO EN MILISEGUNDOS
+// MATRICES DE LOS DÍGITOS DEL 0 AL 9
+//
+// Se utilizan para mostrar el puntaje obtenido al finalizar.
 // ============================================================
 
-uint32_t getMilliseconds(void) {
-    uint32_t value;
+unsigned char DIGITO_0[] = {
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00
+};
 
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        value = milliseconds;
-    }
+unsigned char DIGITO_1[] = {
+    0x00, 0x08, 0x04, 0x7E, 0x7E, 0x00, 0x00, 0x00
+};
 
-    return value;
-}
+unsigned char DIGITO_2[] = {
+    0x00, 0x66, 0x76, 0x7E, 0x5E, 0x4C, 0x40, 0x00
+};
 
-// ============================================================
-// GENERADOR PSEUDOALEATORIO
-// ============================================================
+unsigned char DIGITO_3[] = {
+    0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5E, 0x7E, 0x00
+};
 
-uint8_t randomByte(void) {
-    randomState ^= randomState << 7;
-    randomState ^= randomState >> 9;
-    randomState ^= randomState << 8;
+unsigned char DIGITO_4[] = {
+    0x00, 0x0E, 0x0E, 0x08, 0x08, 0x7E, 0x7E, 0x00
+};
 
-    // Evitar que el estado quede en cero.
-    if (randomState == 0) {
-        randomState = 0xACE1u;
-    }
+unsigned char DIGITO_5[] = {
+    0x00, 0x5E, 0x5E, 0x5E, 0x76, 0x76, 0x76, 0x00
+};
 
-    return (uint8_t)(randomState & 0xFF);
-}
+unsigned char DIGITO_6[] = {
+    0x00, 0x7E, 0x7E, 0x4A, 0x4A, 0x7A, 0x7A, 0x00
+};
 
-void randomizeTrajectory(void) {
-    // Elegir si la pelota sube o baja.
-    directionY = (randomByte() & 0x01) ? 1 : -1;
+unsigned char DIGITO_7[] = {
+    0x00, 0x46, 0x66, 0x36, 0x1E, 0x0E, 0x06, 0x00
+};
 
-    // Seleccionar una pendiente entre 1, 2 y 3.
-    verticalPeriod = 1 + (randomByte() % 3);
+unsigned char DIGITO_8[] = {
+    0x00, 0x7E, 0x7E, 0x56, 0x56, 0x7E, 0x7E, 0x00
+};
 
-    verticalCounter = 0;
-}
-
-// ============================================================
-// FUNCIONES DE VISUALIZACIÓN
-// ============================================================
-
-void copyImageToDisplay(const uint8_t image[MATRIX_SIZE]) {
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        for (uint8_t row = 0; row < MATRIX_SIZE; row++) {
-            displayBuffer[row] = image[row];
-        }
-    }
-}
-
-// Invertir los bits para corregir números mostrados en espejo.
-
-uint8_t reverseBits(uint8_t value) {
-    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4);
-    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2);
-    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1);
-
-    return value;
-}
-
-void copyMirroredImageToDisplay(const uint8_t image[MATRIX_SIZE]) {
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        for (uint8_t row = 0; row < MATRIX_SIZE; row++) {
-            displayBuffer[row] = reverseBits(image[row]);
-        }
-    }
-}
-
-void setPixel(uint8_t buffer[MATRIX_SIZE], int8_t x, int8_t y) {
-    if (
-        x < 0 ||
-        x >= MATRIX_SIZE ||
-        y < 0 ||
-        y >= MATRIX_SIZE
-    ) {
-        return;
-    }
-
-    buffer[y] |= (1 << x);
-}
-
-void renderGame(void) {
-    uint8_t gameImage[MATRIX_SIZE] = {0};
-
-    // Dibujar raqueta vertical en la pared izquierda.
-    for (uint8_t i = 0; i < paddleSize; i++) {
-        setPixel(gameImage, 0, paddleTop + i);
-    }
-
-    // Dibujar pelota.
-    setPixel(gameImage, ballX, ballY);
-
-    copyImageToDisplay(gameImage);
-}
+unsigned char DIGITO_9[] = {
+    0x00, 0x1E, 0x1E, 0x16, 0x76, 0x76, 0x7E, 0x00
+};
 
 // ============================================================
-// COMUNICACIÓN PARALELA CON PIC16F887
+// MATRIZ DEL MENSAJE "PUNTOS"
+//
+// Se muestra después del número obtenido por el jugador.
 // ============================================================
 
-void setPicCommand(uint8_t command) {
-    // Conservar los pull-ups internos de PC0-PC2.
-    PORTC &= 0x07;
+unsigned char PUNTOS[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 
-    // Colocar comando en PC3-PC5.
-    PORTC |= ((command & 0x07) << 3);
-}
+    0x00, 0x7E, 0x7E, 0x12, 0x12, 0x1E, 0x0C, 0x00, // P
+    0x00, 0x7E, 0x7E, 0x60, 0x60, 0x7E, 0x7E, 0x00, // U
+    0x00, 0x7E, 0x7E, 0x0C, 0x18, 0x7E, 0x7E, 0x00, // N
+    0x00, 0x06, 0x06, 0x7E, 0x7E, 0x06, 0x06, 0x00, // T
+    0x00, 0x7E, 0x7E, 0x66, 0x66, 0x7E, 0x7E, 0x00, // O
+    0x00, 0x5E, 0x5E, 0x56, 0x76, 0x76, 0x76, 0x00, // S
 
-void sendPicCommand(PicCommand command) {
-    setPicCommand(command);
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
-    // Mantener el comando activo para que el PIC pueda leerlo.
-    _delay_ms(60);
+// ============================================================
+// POSICIONES DE LAS FILAS DE LA MATRIZ
+//
+// Cada valor activa una fila durante la multiplexación.
+// ============================================================
+
+unsigned char posiciones[8] = {
+    1, 2, 4, 8, 16, 32, 64, 128
+};
+
+// ============================================================
+// FUNCIÓN: enviar_comando_pic
+//
+// Envía un evento al PIC16F887 mediante PC0-PC2.
+// El PIC interpreta el valor recibido y reproduce un sonido.
+//
+// El comando se mantiene durante 20 ms para permitir su lectura.
+// Después, el bus regresa a 000 para habilitar un nuevo evento.
+// ============================================================
+
+void enviar_comando_pic(unsigned char comando) {
+    // Conservar el estado de PC3-PC5 y modificar PC0-PC2.
+    PORTC =
+        (PORTC & 0xF8) |
+        (comando & 0x07);
+
+    _delay_ms(20);
 
     // Regresar a silencio.
-    setPicCommand(PIC_NONE);
+    PORTC &= 0xF8;
 }
 
 // ============================================================
-// ANTIRREBOTE DE PULSADORES
+// FUNCIONES: iniciar_musica_bienvenida y detener_musica_bienvenida
+//
+// La música de bienvenida funciona de forma continua.
+// Por esta razón, el código 111 permanece activo mientras
+// el texto "BIENVENIDO" se desplaza en la matriz.
 // ============================================================
 
-typedef struct {
-    uint8_t lastRawState;
-    uint8_t stableState;
-    uint32_t changeTime;
-} ButtonState;
+void iniciar_musica_bienvenida() {
+    PORTC =
+        (PORTC & 0xF8) |
+        CMD_BIENVENIDA;
+}
 
-ButtonState upButton = {0, 0, 0};
-ButtonState downButton = {0, 0, 0};
-ButtonState startButton = {0, 0, 0};
+void detener_musica_bienvenida() {
+    PORTC &= 0xF8;
+}
 
-uint8_t buttonPressed(uint8_t pin, ButtonState *button) {
-    uint8_t rawState;
-    uint32_t now;
+// ============================================================
+// FUNCIÓN: inicializar_adc
+//
+// Configura el convertidor analógico-digital para leer ADC6.
+// El pulsador SUBIR fue conectado a ADC6 para liberar PC2,
+// debido a que PC2 se utiliza para comunicarse con el PIC.
+// ============================================================
 
-    // El pulsador está activo cuando conecta el pin hacia GND.
-    rawState = !(PINC & (1 << pin));
+void inicializar_adc() {
+    // Usar AVCC como referencia y seleccionar ADC6.
+    ADMUX =
+        (1 << REFS0) |
+        6;
 
-    now = getMilliseconds();
+    // Activar ADC con prescaler de 64.
+    // Frecuencia del ADC: 8 MHz / 64 = 125 kHz.
+    ADCSRA =
+        (1 << ADEN) |
+        (1 << ADPS2) |
+        (1 << ADPS1);
+}
 
-    if (rawState != button->lastRawState) {
-        button->lastRawState = rawState;
-        button->changeTime = now;
+// ============================================================
+// FUNCIÓN: leer_adc6
+//
+// Ejecuta una conversión analógica y devuelve el valor leído.
+// El resultado puede variar entre 0 y 1023.
+// ============================================================
+
+unsigned int leer_adc6() {
+    // Seleccionar ADC6 conservando la referencia AVCC.
+    ADMUX =
+        (ADMUX & 0xF0) |
+        6;
+
+    // Iniciar conversión.
+    ADCSRA |=
+        (1 << ADSC);
+
+    // Esperar hasta finalizar la conversión.
+    while (ADCSRA & (1 << ADSC)) {
     }
 
-    if ((now - button->changeTime) >= DEBOUNCE_TIME_MS) {
-        if (rawState != button->stableState) {
-            button->stableState = rawState;
+    return ADC;
+}
 
-            if (button->stableState) {
-                return 1;
-            }
-        }
+// ============================================================
+// FUNCIÓN: boton_subir_presionado
+//
+// Determina si el botón conectado a ADC6 fue presionado.
+// Al presionar el botón, ADC6 queda conectado a GND.
+// ============================================================
+
+unsigned char boton_subir_presionado() {
+    if (leer_adc6() < 200) {
+        return 1;
     }
 
     return 0;
 }
 
 // ============================================================
-// CONFIGURACIÓN DE NIVELES
+// FUNCIÓN: estado_bienvenido
+//
+// Desplaza el mensaje "BIENVENIDO" en la matriz LED.
+// Durante este estado, el PIC reproduce música de bienvenida.
+// El botón conectado a PC4 permite avanzar al siguiente estado.
 // ============================================================
 
-void applyLevelSettings(void) {
-    switch (currentLevel) {
-        case 1:
-            // Fácil:
-            // velocidad baja y raqueta de 3 LED.
-            ballInterval = 650;
-            paddleSize = 3;
-            break;
+void estado_bienvenido() {
+    // Iniciar la música antes de mostrar el mensaje.
+    iniciar_musica_bienvenida();
 
-        case 2:
-            // Medio:
-            // velocidad intermedia y raqueta de 3 LED.
-            ballInterval = 400;
-            paddleSize = 3;
-            break;
+    while (1) {
+        for (
+            int i = 0;
+            i <= TAM_BIENVENIDA - 8;
+            i++
+        ) {
+            for (int k = 0; k < 50; k++) {
+                for (int j = 0; j < 8; j++) {
+                    // Activar una fila y mostrar sus columnas.
+                    PORTD =
+                        posiciones[j];
 
-        case 3:
-            // Difícil:
-            // velocidad elevada y raqueta de 2 LED.
-            ballInterval = 230;
-            paddleSize = 2;
-            break;
+                    PORTB =
+                        ~BIENVENIDA[i + j];
 
-        default:
-            currentLevel = 1;
-            ballInterval = 650;
-            paddleSize = 3;
-            break;
-    }
+                    _delay_ms(0.05);
+                }
 
-    // Evitar que la raqueta salga del borde inferior.
-    if (paddleTop > MATRIX_SIZE - paddleSize) {
-        paddleTop = MATRIX_SIZE - paddleSize;
-    }
-}
+                // PC4 permite salir del mensaje de bienvenida.
+                if (!(PINC & (1 << PC4))) {
+                    PORTD = 0x00;
+                    PORTB = 0xFF;
 
-void showCurrentLevel(void) {
-    if (currentLevel == 1) {
-        copyMirroredImageToDisplay(LEVEL_1);
-    }
+                    // Detener música antes de cambiar de estado.
+                    detener_musica_bienvenida();
 
-    if (currentLevel == 2) {
-        copyMirroredImageToDisplay(LEVEL_2);
-    }
+                    _delay_ms(200);
 
-    if (currentLevel == 3) {
-        copyMirroredImageToDisplay(LEVEL_3);
-    }
-
-    sendPicCommand(PIC_LEVEL);
-
-    _delay_ms(700);
-
-    renderGame();
-}
-
-void selectNextLevel(void) {
-    currentLevel++;
-
-    if (currentLevel > 3) {
-        currentLevel = 1;
-    }
-
-    applyLevelSettings();
-
-    showCurrentLevel();
-}
-
-void selectPreviousLevel(void) {
-    if (currentLevel == 1) {
-        currentLevel = 3;
-    } else {
-        currentLevel--;
-    }
-
-    applyLevelSettings();
-
-    showCurrentLevel();
-}
-
-// ============================================================
-// INICIAR PARTIDA
-// ============================================================
-
-void startGame(void) {
-    applyLevelSettings();
-
-    // Centrar raqueta.
-    paddleTop = (MATRIX_SIZE - paddleSize) / 2;
-
-    // Ubicar pelota cerca del centro.
-    ballX = 4;
-    ballY = 3;
-
-    // Variar semilla según el instante de pulsación.
-    randomState ^= (uint16_t)getMilliseconds();
-    randomState ^= ((uint16_t)PINC << 8);
-
-    // La dirección horizontal inicial puede variar.
-    directionX = (randomByte() & 0x01) ? 1 : -1;
-
-    // Elegir dirección vertical y pendiente inicial.
-    randomizeTrajectory();
-
-    score = 0;
-
-    lastBallMovement = getMilliseconds();
-
-    gameState = STATE_RUNNING;
-
-    sendPicCommand(PIC_START);
-
-    renderGame();
-}
-
-// ============================================================
-// FINALIZAR PARTIDA
-// ============================================================
-
-void finishGameAsDefeat(void) {
-    gameState = STATE_GAME_OVER;
-
-    sendPicCommand(PIC_GAME_OVER);
-
-    copyImageToDisplay(GAME_OVER_IMAGE);
-}
-
-void finishGameAsVictory(void) {
-    gameState = STATE_VICTORY;
-
-    sendPicCommand(PIC_VICTORY);
-
-    copyImageToDisplay(VICTORY_IMAGE);
-}
-
-// ============================================================
-// MOVER RAQUETA
-// ============================================================
-
-void movePaddleUp(void) {
-    if (paddleTop > 0) {
-        paddleTop--;
-
-        renderGame();
-    }
-}
-
-void movePaddleDown(void) {
-    if (paddleTop < MATRIX_SIZE - paddleSize) {
-        paddleTop++;
-
-        renderGame();
+                    return;
+                }
+            }
+        }
     }
 }
 
 // ============================================================
-// ACTUALIZAR PELOTA
+// FUNCIÓN: estado_seleccion_nivel
+//
+// Permite elegir entre tres dificultades:
+// 0 -> Fácil
+// 1 -> Normal
+// 2 -> Difícil
+//
+// PC4 cambia el nivel.
+// PC5 confirma la selección.
 // ============================================================
 
-void updateBall(void) {
-    int8_t nextX;
-    int8_t nextY;
+int estado_seleccion_nivel() {
+    int nivel = 0;
 
-    uint8_t wallCollision = 0;
-    uint8_t moveVertically = 0;
+    while (1) {
+        for (int j = 0; j < 8; j++) {
+            PORTD =
+                posiciones[j];
 
-    // La pelota siempre se mueve horizontalmente.
-    nextX = ballX + directionX;
-
-    // Mantener temporalmente la posición vertical.
-    nextY = ballY;
-
-    verticalCounter++;
-
-    // Aplicar movimiento vertical según la pendiente seleccionada.
-    if (verticalCounter >= verticalPeriod) {
-        verticalCounter = 0;
-
-        moveVertically = 1;
-
-        nextY = ballY + directionY;
-    }
-
-    // --------------------------------------------------------
-    // Rebote contra pared superior o inferior.
-    // --------------------------------------------------------
-
-    if (
-        moveVertically &&
-        (nextY < 0 || nextY >= MATRIX_SIZE)
-    ) {
-        directionY = -directionY;
-
-        nextY = ballY + directionY;
-
-        // Cambiar pendiente después del rebote.
-        verticalPeriod = 1 + (randomByte() % 3);
-
-        wallCollision = 1;
-    }
-
-    // --------------------------------------------------------
-    // Rebote contra pared derecha.
-    // --------------------------------------------------------
-
-    if (nextX >= MATRIX_SIZE) {
-        directionX = -directionX;
-
-        nextX = ballX + directionX;
-
-        // Variar pendiente después del rebote.
-        verticalPeriod = 1 + (randomByte() % 3);
-
-        wallCollision = 1;
-    }
-
-    if (wallCollision) {
-        sendPicCommand(PIC_WALL);
-    }
-
-    // --------------------------------------------------------
-    // Verificar contacto con pared izquierda.
-    // --------------------------------------------------------
-
-    if (nextX == 0 && directionX < 0) {
-        uint8_t hitsPaddle;
-
-        hitsPaddle =
-            nextY >= paddleTop &&
-            nextY < paddleTop + paddleSize;
-
-        if (hitsPaddle) {
-            ballX = 0;
-            ballY = nextY;
-
-            // Rebotar hacia la derecha.
-            directionX = 1;
-
-            score++;
-
-            // Determinar dirección según zona de impacto.
-            if (nextY == paddleTop) {
-                // Parte superior de la raqueta.
-                directionY = -1;
-            } else if (
-                nextY == paddleTop + paddleSize - 1
-            ) {
-                // Parte inferior de la raqueta.
-                directionY = 1;
-            } else {
-                // Centro de la raqueta.
-                directionY =
-                    (randomByte() & 0x01) ? 1 : -1;
+            // Mostrar el símbolo correspondiente al nivel actual.
+            if (nivel == 0) {
+                PORTB =
+                    ~MODO_FACIL[j];
+            }
+            else if (nivel == 1) {
+                PORTB =
+                    ~MODO_NORMAL[j];
+            }
+            else {
+                PORTB =
+                    ~MODO_DIFICIL[j];
             }
 
-            // Variar pendiente.
-            verticalPeriod = 1 + (randomByte() % 3);
-
-            verticalCounter = 0;
-
-            sendPicCommand(PIC_PADDLE);
-
-            if (score >= WIN_SCORE) {
-                finishGameAsVictory();
-
-                return;
-            }
-
-            renderGame();
-
-            return;
+            _delay_ms(0.05);
         }
 
-        // Pelota fuera de la raqueta.
-        finishGameAsDefeat();
+        // Cambiar nivel y reproducir sonido de confirmación.
+        if (!(PINC & (1 << PC4))) {
+            nivel =
+                (nivel + 1) % 3;
 
-        return;
+            enviar_comando_pic(
+                CMD_NIVEL
+            );
+
+            _delay_ms(200);
+        }
+
+        // Confirmar nivel y continuar con el juego.
+        if (!(PINC & (1 << PC5))) {
+            PORTD = 0x00;
+            PORTB = 0xFF;
+
+            _delay_ms(200);
+
+            return nivel;
+        }
+    }
+}
+
+// ============================================================
+// FUNCIÓN: estado_juego
+//
+// Ejecuta la lógica principal del Pong.
+//
+// La pelota rebota contra tres paredes.
+// La paleta se encuentra en la última fila.
+// El jugador gana al alcanzar 10 puntos.
+// ============================================================
+
+int estado_juego(int nivel) {
+    int velocidad;
+
+    // Ajustar velocidad según la dificultad elegida.
+    if (nivel == 0) {
+        velocidad = 150;
+    }
+    else if (nivel == 1) {
+        velocidad = 100;
+    }
+    else {
+        velocidad = 60;
     }
 
-    // Actualizar posición normal.
-    ballX = nextX;
-    ballY = nextY;
+    // Posición inicial de la paleta.
+    int columna_paleta =
+        3;
 
-    renderGame();
+    // Posición inicial de la pelota.
+    int fila_bola =
+        4;
+
+    int columna_bola =
+        3;
+
+    // Dirección inicial de la pelota.
+    int direccion_fila =
+        1;
+
+    int direccion_columna =
+        1;
+
+    // Puntaje acumulado.
+    int puntos =
+        0;
+
+    // Contadores utilizados para controlar la velocidad.
+    int contador_velocidad =
+        0;
+
+    int contador_paleta =
+        0;
+
+    // Avisar al PIC que la partida comenzó.
+    enviar_comando_pic(
+        CMD_INICIO
+    );
+
+    while (1) {
+        // Crear una imagen temporal del juego.
+        unsigned char frame[8] = {
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        };
+
+        // Dibujar la paleta con dos LED consecutivos.
+        frame[7] |=
+            (1 << columna_paleta);
+
+        frame[7] |=
+            (1 << (columna_paleta + 1));
+
+        // Dibujar la pelota.
+        frame[fila_bola] |=
+            (1 << columna_bola);
+
+        // Mostrar el frame mediante multiplexación.
+        for (int j = 0; j < 8; j++) {
+            PORTD =
+                posiciones[j];
+
+            PORTB =
+                ~frame[j];
+
+            _delay_ms(0.05);
+        }
+
+        // ----------------------------------------------------
+        // CONTROLAR EL MOVIMIENTO DE LA PALETA
+        // ----------------------------------------------------
+
+        contador_paleta++;
+
+        if (contador_paleta >= 20) {
+            contador_paleta = 0;
+
+            // ADC6 reemplaza al pin PC2 original.
+            // Permite desplazar la paleta en una dirección.
+            if (boton_subir_presionado()) {
+                if (columna_paleta > 0) {
+                    columna_paleta--;
+                }
+            }
+
+            // PC3 desplaza la paleta en la dirección contraria.
+            if (!(PINC & (1 << PC3))) {
+                if (columna_paleta < 6) {
+                    columna_paleta++;
+                }
+            }
+        }
+
+        // ----------------------------------------------------
+        // ACTUALIZAR LA POSICIÓN DE LA PELOTA
+        // ----------------------------------------------------
+
+        contador_velocidad++;
+
+        if (contador_velocidad >= velocidad) {
+            contador_velocidad = 0;
+
+            // Calcular la siguiente posición de la pelota.
+            int siguiente_fila =
+                fila_bola +
+                direccion_fila;
+
+            int siguiente_columna =
+                columna_bola +
+                direccion_columna;
+
+            // ------------------------------------------------
+            // VERIFICAR CONTACTO CON LA PALETA
+            // ------------------------------------------------
+
+            if (fila_bola == 7) {
+                if (
+                    columna_bola == columna_paleta ||
+                    columna_bola == columna_paleta + 1
+                ) {
+                    // Aumentar puntaje después de un rebote válido.
+                    puntos++;
+
+                    // Finalizar la partida al alcanzar 10 puntos.
+                    if (puntos >= 10) {
+                        enviar_comando_pic(
+                            CMD_VICTORIA
+                        );
+
+                        return -1;
+                    }
+
+                    // Reproducir sonido de rebote contra paleta.
+                    enviar_comando_pic(
+                        CMD_PALETA
+                    );
+
+                    // Invertir dirección vertical.
+                    direccion_fila =
+                        -direccion_fila;
+
+                    siguiente_fila =
+                        fila_bola +
+                        direccion_fila;
+
+                    // Corregir trayectoria si también alcanza un borde.
+                    if (
+                        siguiente_columna <= 0 ||
+                        siguiente_columna >= 7
+                    ) {
+                        direccion_columna =
+                            -direccion_columna;
+
+                        siguiente_columna =
+                            columna_bola +
+                            direccion_columna;
+                    }
+                }
+                else {
+                    // La pelota no coincidió con la paleta.
+                    enviar_comando_pic(
+                        CMD_DERROTA
+                    );
+
+                    return puntos;
+                }
+            }
+
+            // ------------------------------------------------
+            // REBOTE CONTRA LA PARED SUPERIOR
+            // ------------------------------------------------
+
+            else if (siguiente_fila <= 0) {
+                direccion_fila =
+                    -direccion_fila;
+
+                siguiente_fila =
+                    fila_bola +
+                    direccion_fila;
+
+                enviar_comando_pic(
+                    CMD_PARED
+                );
+
+                // Corregir trayectoria si alcanza una esquina.
+                if (
+                    siguiente_columna <= 0 ||
+                    siguiente_columna >= 7
+                ) {
+                    direccion_columna =
+                        -direccion_columna;
+
+                    siguiente_columna =
+                        columna_bola +
+                        direccion_columna;
+                }
+            }
+
+            // ------------------------------------------------
+            // REBOTE CONTRA PAREDES LATERALES
+            // ------------------------------------------------
+
+            else if (
+                siguiente_columna <= 0 ||
+                siguiente_columna >= 7
+            ) {
+                direccion_columna =
+                    -direccion_columna;
+
+                siguiente_columna =
+                    columna_bola +
+                    direccion_columna;
+
+                enviar_comando_pic(
+                    CMD_PARED
+                );
+            }
+
+            // Guardar la nueva posición de la pelota.
+            fila_bola =
+                siguiente_fila;
+
+            columna_bola =
+                siguiente_columna;
+        }
+    }
+}
+
+// ============================================================
+// FUNCIÓN: estado_ganador
+//
+// Desplaza el mensaje "GANADOR" tres veces.
+// Se ejecuta después de alcanzar 10 puntos.
+// ============================================================
+
+void estado_ganador() {
+    for (int rep = 0; rep < 3; rep++) {
+        for (
+            int i = 0;
+            i <= TAM_GANADOR - 8;
+            i++
+        ) {
+            for (int k = 0; k < 50; k++) {
+                for (int j = 0; j < 8; j++) {
+                    PORTD =
+                        posiciones[j];
+
+                    PORTB =
+                        ~GANADOR[i + j];
+
+                    _delay_ms(0.05);
+                }
+            }
+        }
+    }
+
+    // Apagar matriz después del mensaje.
+    PORTD = 0x00;
+    PORTB = 0xFF;
+}
+
+// ============================================================
+// FUNCIÓN: estado_puntuacion
+//
+// Construye un mensaje con el puntaje obtenido y la palabra
+// "PUNTOS". Luego, desplaza el contenido en la matriz.
+//
+// Ejemplo:
+// 4 PUNTOS
+// ============================================================
+
+void estado_puntuacion(int puntos) {
+    int decenas =
+        puntos / 10;
+
+    int unidades =
+        puntos % 10;
+
+    // Asociar cada número con su matriz correspondiente.
+    unsigned char *digitos[10] = {
+        DIGITO_0,
+        DIGITO_1,
+        DIGITO_2,
+        DIGITO_3,
+        DIGITO_4,
+        DIGITO_5,
+        DIGITO_6,
+        DIGITO_7,
+        DIGITO_8,
+        DIGITO_9
+    };
+
+    // Buffer temporal para construir el mensaje final.
+    unsigned char buffer[80];
+
+    int tam =
+        0;
+
+    // Agregar espacio inicial.
+    for (int i = 0; i < 8; i++) {
+        buffer[tam++] =
+            0x00;
+    }
+
+    // Agregar decenas cuando el puntaje sea mayor o igual a 10.
+    if (puntos >= 10) {
+        for (int i = 0; i < 8; i++) {
+            buffer[tam++] =
+                digitos[decenas][i];
+        }
+    }
+
+    // Agregar unidades.
+    for (int i = 0; i < 8; i++) {
+        buffer[tam++] =
+            digitos[unidades][i];
+    }
+
+    // Agregar la palabra PUNTOS.
+    for (int i = 0; i < 48; i++) {
+        buffer[tam++] =
+            PUNTOS[i];
+    }
+
+    // Agregar espacio final.
+    for (int i = 0; i < 8; i++) {
+        buffer[tam++] =
+            0x00;
+    }
+
+    // Desplazar el mensaje completo en la matriz.
+    for (
+        int i = 0;
+        i <= tam - 8;
+        i++
+    ) {
+        for (int k = 0; k < 50; k++) {
+            for (int j = 0; j < 8; j++) {
+                PORTD =
+                    posiciones[j];
+
+                PORTB =
+                    ~buffer[i + j];
+
+                _delay_ms(0.05);
+            }
+        }
+    }
+
+    // Apagar matriz después del mensaje.
+    PORTD = 0x00;
+    PORTB = 0xFF;
 }
 
 // ============================================================
 // FUNCIÓN PRINCIPAL
+//
+// Configura puertos y ejecuta el ciclo completo del juego:
+//
+// 1. Mostrar bienvenida.
+// 2. Seleccionar dificultad.
+// 3. Ejecutar partida.
+// 4. Mostrar mensaje de ganador o puntaje.
+// 5. Reiniciar flujo.
 // ============================================================
 
 int main(void) {
-    // --------------------------------------------------------
-    // Configurar matriz LED.
-    // --------------------------------------------------------
+    // PORTD controla las filas de la matriz.
+    DDRD =
+        0xFF;
 
-    // PORTB controla columnas C0-C7.
-    DDRB = 0xFF;
+    // PORTB controla las columnas de la matriz.
+    DDRB =
+        0xFF;
 
-    // PORTD controla filas F0-F7.
-    DDRD = 0xFF;
+    // PC0-PC2 funcionan como salidas hacia el PIC.
+    // PC3-PC5 funcionan como entradas para pulsadores.
+    DDRC =
+        0x07;
 
-    // Estado apagado para esta matriz:
-    // columnas en bajo y filas en alto.
+    // Activar pull-ups internos en PC3-PC5.
+    // Mantener el bus PC0-PC2 inicialmente en 000.
+    PORTC =
+        0x38;
 
-    PORTB = 0x00;
-    PORTD = 0xFF;
-
-    // --------------------------------------------------------
-    // Configurar pulsadores y comunicación con PIC.
-    // --------------------------------------------------------
-
-    // PC0-PC2: entradas.
-    // PC3-PC5: salidas.
-
-    DDRC = 0x38;
-
-    // Activar pull-ups internos para botones PC0-PC2.
-
-    PORTC = 0x07;
-
-    // --------------------------------------------------------
-    // Inicializar temporizador.
-    // --------------------------------------------------------
-
-    initTimer0();
-
-    sei();
-
-    // --------------------------------------------------------
-    // Mostrar nivel inicial.
-    // --------------------------------------------------------
-
-    applyLevelSettings();
-
-    showCurrentLevel();
-
-    // ========================================================
-    // BUCLE PRINCIPAL
-    // ========================================================
+    // Preparar ADC6 para leer el botón SUBIR.
+    inicializar_adc();
 
     while (1) {
-        uint8_t pressUp;
-        uint8_t pressDown;
-        uint8_t pressStart;
+        // Mostrar bienvenida antes de cada partida.
+        estado_bienvenido();
 
-        pressUp =
-            buttonPressed(BTN_UP, &upButton);
+        _delay_ms(10);
 
-        pressDown =
-            buttonPressed(BTN_DOWN, &downButton);
+        // Permitir que el usuario seleccione el nivel.
+        int nivel =
+            estado_seleccion_nivel();
 
-        pressStart =
-            buttonPressed(BTN_START, &startButton);
+        // Ejecutar el Pong y guardar el resultado.
+        int puntos =
+            estado_juego(nivel);
 
-        // ----------------------------------------------------
-        // Juego en ejecución.
-        // ----------------------------------------------------
-
-        if (gameState == STATE_RUNNING) {
-            if (pressUp) {
-                movePaddleUp();
-            }
-
-            if (pressDown) {
-                movePaddleDown();
-            }
-
-            // INICIAR también permite reiniciar la ronda.
-            if (pressStart) {
-                startGame();
-            }
-
-            if (
-                getMilliseconds() - lastBallMovement
-                >= ballInterval
-            ) {
-                lastBallMovement = getMilliseconds();
-
-                updateBall();
-            }
+        // Mostrar mensaje de victoria o puntuación final.
+        if (puntos == -1) {
+            estado_ganador();
         }
-
-        // ----------------------------------------------------
-        // Juego detenido.
-        // ----------------------------------------------------
-
         else {
-            // SUBIR: siguiente nivel.
-            if (pressUp) {
-                selectNextLevel();
-            }
-
-            // BAJAR: nivel anterior.
-            if (pressDown) {
-                selectPreviousLevel();
-            }
-
-            // INICIAR: comenzar partida.
-            if (pressStart) {
-                startGame();
-            }
+            estado_puntuacion(
+                puntos
+            );
         }
     }
 
